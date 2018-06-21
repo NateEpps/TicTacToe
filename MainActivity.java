@@ -10,18 +10,34 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Point;
 import android.graphics.Rect;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
 import android.media.MediaPlayer;
 import android.os.Bundle;
 import android.provider.MediaStore;
 import android.util.Log;
+import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.View;
+/*import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;*/
 import java.util.ArrayList;
 import java.util.Random;
 
 public class MainActivity extends Activity
 {
     private MediaPlayer music;
+
+    // The following are used for the shake detection
+    private SensorManager mSensorManager;
+    private Sensor mAccelerometer;
+    private ShakeSensor mShakeDetector;
+    private GameView game;
 
     @Override
     protected void onCreate(Bundle savedInstanceState)
@@ -32,6 +48,36 @@ public class MainActivity extends Activity
 
         music = MediaPlayer.create(this, R.raw.music);
         music.start();
+
+        // ShakeDetector initialization
+        mSensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
+        mAccelerometer = mSensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+        mShakeDetector = new ShakeSensor(new ShakeSensor.ShakeListener() {
+            @Override
+            public void onShake() {
+                /*
+                 * The following method, "handleShakeEvent(count):" is a stub/
+                 * method you would use to setup whatever you want done once the
+                 * device has been shook.
+                 */
+                if (game != null)
+                    game.onShake();
+            }
+        });
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        // Add the following line to register the Session Manager Listener onResume
+        mSensorManager.registerListener(mShakeDetector, mAccelerometer,	SensorManager.SENSOR_DELAY_UI);
+    }
+
+    @Override
+    public void onPause() {
+        // Add the following line to unregister the Sensor Manager onPause
+        mSensorManager.unregisterListener(mShakeDetector);
+        super.onPause();
     }
 
     public static int randInt(int lo, int hi)
@@ -113,8 +159,69 @@ public class MainActivity extends Activity
         }
     }
 
-    private static class GameView extends View
+    private static class ShakeSensor implements SensorEventListener
     {
+        private static final float SHAKE_THRESHOLD_GRAVITY = 2.7F;
+        private static final int SHAKE_SLOP_TIME_MS = 500;
+        private static final int SHAKE_COUNT_RESET_TIME_MS = 3000;
+
+        private long mShakeTimestamp;
+        private int mShakeCount;
+        private ShakeListener mlistener;
+
+        public static interface ShakeListener
+        {
+            public void onShake();
+        }
+
+        public ShakeSensor(ShakeListener sl)
+        {
+            mlistener = sl;
+        }
+
+        @Override
+        public void onSensorChanged(SensorEvent event)
+        {
+            if (mlistener != null) {
+                float x = event.values[0];
+                float y = event.values[1];
+                float z = event.values[2];
+
+                float gX = x / SensorManager.GRAVITY_EARTH;
+                float gY = y / SensorManager.GRAVITY_EARTH;
+                float gZ = z / SensorManager.GRAVITY_EARTH;
+
+                // gForce will be close to 1 when there is no movement.
+                float gForce = (float) Math.sqrt(gX * gX + gY * gY + gZ * gZ);
+
+                if (gForce > SHAKE_THRESHOLD_GRAVITY) {
+                    final long now = System.currentTimeMillis();
+                    // ignore shake events too close to each other (500ms)
+                    if (mShakeTimestamp + SHAKE_SLOP_TIME_MS > now) {
+                        return;
+                    }
+
+                    // reset the shake count after 3 seconds of no shakes
+                    if (mShakeTimestamp + SHAKE_COUNT_RESET_TIME_MS < now) {
+                        mShakeCount = 0;
+                    }
+
+                    mShakeTimestamp = now;
+                    mShakeCount++;
+
+                    mlistener.onShake();
+                }
+            }
+        }
+
+        @Override
+        public void onAccuracyChanged(Sensor sensor, int i)
+        {
+            // do nothing
+        }
+    }
+
+    private static class GameView extends View implements ShakeSensor.ShakeListener {
         private ArrayList<Pair<Point>> gridlines;
         private static final ArrayList<Pair<Integer>> winpairs;
         private Context parent;
@@ -125,6 +232,8 @@ public class MainActivity extends Activity
         private boolean xFirstMove;
 
         private MediaPlayer sound;
+
+        public GameView self;
 
         private static final int OPEN = 0, HAS_X = 1, HAS_O = 2;
 
@@ -142,7 +251,8 @@ public class MainActivity extends Activity
             winpairs.add(new Pair<Integer>(2, 2));
         }
 
-        public GameView(Context context) {
+        public GameView(final Context context)
+        {
             super(context);
             setFocusable(true);
 
@@ -163,9 +273,48 @@ public class MainActivity extends Activity
             changeProperty("draws", 0);
 
             sound = MediaPlayer.create(context, R.raw.blop);
+
+            self = this;
+
+            setOnTouchListener(new OnTouchListener() {
+                private GestureDetector gd = new GestureDetector(context, new GestureDetector.SimpleOnGestureListener() {
+                    @Override
+                    public boolean onDoubleTap(MotionEvent e)
+                    {
+                        for (int x = 0; x < 9; x++)
+                            self.spaces[x] = OPEN;
+
+                        self.invalidate();
+
+                        return true;
+                    }
+
+                    @Override
+                    public boolean onSingleTapConfirmed(MotionEvent e)
+                    {
+                        self.touch(e);
+                        return true;
+                    }
+
+                    @Override
+                    public boolean onFling(MotionEvent m1, MotionEvent m2, float vx, float vy)
+                    {
+                        // rotate the board?
+
+                        return false;
+                    }
+                });
+
+                @Override
+                public boolean onTouch(View view, MotionEvent motionEvent) {
+                    gd.onTouchEvent(motionEvent);
+                    return true;
+                }
+            });
         }
 
-        private int getIndexFor(Point p) {
+        private int getIndexFor(Point p)
+        {
             if (p.y < getHeight() / 3) {
                 if (p.x < getWidth() / 3)
                     return 0;
@@ -173,16 +322,14 @@ public class MainActivity extends Activity
                     return 1;
                 else
                     return 2;
-            }
-            else if (p.y < 2 * getHeight() / 3) {
+            } else if (p.y < 2 * getHeight() / 3) {
                 if (p.x < getWidth() / 3)
                     return 3;
                 else if (p.x < 2 * getWidth() / 3)
                     return 4;
                 else
                     return 5;
-            }
-            else {
+            } else {
                 if (p.x < getWidth() / 3)
                     return 6;
                 else if (p.x < 2 * getWidth() / 3)
@@ -192,25 +339,150 @@ public class MainActivity extends Activity
             }
         }
 
-        private void changeProperty(String name, long inc)
+        @Override
+        public void onShake()
         {
-            SharedPreferences prefs = parent.getSharedPreferences("com.example.eppsna01.tictactoe2", Context.MODE_PRIVATE);
+            String bundle = "com.example.eppsna01.tictactoe2";
 
-            long data = prefs.getLong("com.example.eppsna01.tictactoe2." + name, 0);
+            SharedPreferences prefs = parent.getSharedPreferences(bundle, Context.MODE_PRIVATE);
+
+            prefs.edit().putLong(bundle + ".wins", 0).commit();
+            prefs.edit().putLong(bundle + ".losses", 0).commit();
+            prefs.edit().putLong(bundle + ".draws", 0).commit();
+        }
+
+        private void changePropertyPrefs(String name, long inc) {
+            String bundle = "com.example.eppsna01.tictactoe2";
+            SharedPreferences prefs = parent.getSharedPreferences(bundle, Context.MODE_PRIVATE);
+
+            long data = prefs.getLong(bundle + "." + name, 0);
             data += inc;
 
-            if (!prefs.edit().putLong("com.example.eppsna01.tictactoe2." + name, data).commit()) {
+            if (!prefs.edit().putLong(bundle + "." + name, data).commit()) {
                 Log.e("changeProperty()", "Error changing property");
             }
         }
 
-        private String getWLDString()
+        /*private File getScoresFile() throws IOException {
+            String[] files = parent.fileList();
+            boolean found = false;
+            File scores = null;
+
+            for (String f : files) {
+                if (f.equals("scores")) {
+                    found = true;
+                    return new File(parent.getFilesDir(), "scores");
+                }
+            }
+
+            if (!found) {
+                scores = new File(parent.getFilesDir(), "scores");
+                FileOutputStream fos = new FileOutputStream(scores, false);
+
+                String data = "0 0 0";
+                fos.write(data.getBytes());
+
+                return scores;
+            }
+
+            return scores;
+        }
+
+        private void changePropertyFile(String name, long inc) {
+            File file = null;
+
+            try {
+                file = getScoresFile();
+            } catch (IOException e) {
+                StackTraceElement elements[] = e.getStackTrace();
+                String fname = "changePropertyFile";
+
+                Log.e(fname, "ERROR: Stack Trace: ");
+                for (StackTraceElement ste : elements)
+                    Log.e(fname, ste.toString());
+
+                System.exit(0);
+            }
+
+            FileInputStream fis = null;
+            try {
+                fis = new FileInputStream(file);
+            } catch (Exception ex) {
+                Log.e("changePropertyFile", "Could not create input stream");
+
+                System.exit(0);
+            }
+
+            int data[] = new int[3];
+            for (int x = 0; x < 3; x++) {
+                try {
+                    data[x] = fis.read();
+                } catch (IOException e) {
+                    StackTraceElement elements[] = e.getStackTrace();
+                    String fname = "changePropertyFile";
+
+                    Log.e(fname, "ERROR: Stack Trace: ");
+                    for (StackTraceElement ste : elements)
+                        Log.e(fname, ste.toString());
+
+                    System.exit(0);
+                }
+            }
+
+            FileOutputStream fos = null;
+            try {
+                fos = new FileOutputStream(file, false);
+            } catch (Exception ex) {
+                Log.e("changePropertyFile", "Could not create new FileOutputStream");
+                System.exit(0);
+            }
+
+            if (name == "wins") {
+                data[0] += inc;
+            } else if (name == "losses") {
+                data[1] += inc;
+            } else if (name == "draws") {
+                data[2] += inc;
+            } else {
+                Log.e("changePropertyFile", "Invalid \"name\" parameter");
+                System.exit(0);
+            }
+        }*/
+
+        private void changeProperty(String name, long inc)
+        {
+            changePropertyPrefs(name, inc);
+        }
+
+        private String getWLDStringPrefs()
         {
             String appname = "com.example.eppsna01.tictactoe2";
 
             SharedPreferences prefs = parent.getSharedPreferences(appname, Context.MODE_PRIVATE);
 
             return prefs.getLong(appname + ".wins", -1) + "/" + prefs.getLong(appname + ".losses", -1) + "/" + prefs.getLong(appname + ".draws", -1);
+        }
+
+        /*private String getWLDStringFile()
+        {
+            FileInputStream fis = null;
+            try {
+                fis = new FileInputStream(getScoresFile());
+
+                return fis.read() + "/" + fis.read() + "/" + fis.read();
+            }
+            catch (Exception ex) {
+                Log.e("getWLDStringFile", "Could not open/read from file");
+
+                System.exit(0);
+            }
+
+            return "(error)";
+        }*/
+
+        private String getWLDString()
+        {
+            return getWLDStringPrefs();
         }
 
         @Override
@@ -309,6 +581,26 @@ public class MainActivity extends Activity
             return -1;
         }
 
+        private int spotToBlockX()
+        {
+            int[] spacesCopy = new int[spaces.length];
+            System.arraycopy(spaces, 0, spacesCopy, 0, spaces.length);
+
+            for (int x = 0; x < 9; x++)
+            {
+                if (spaces[x] != OPEN)
+                    continue;
+
+                spacesCopy[x] = HAS_X;
+                if (checkWin(spacesCopy, null))
+                    return x;
+
+                spacesCopy[x] = OPEN;
+            }
+
+            return -1;
+        }
+
         private void playO()
         {
             ArrayList<Integer> openIndexes = new ArrayList<Integer>();
@@ -321,15 +613,16 @@ public class MainActivity extends Activity
                 return;
             }
 
-            int aiMove = firstPossibleOWin(), index = 0;
-            if (aiMove == -1) {
-                index = openIndexes.get(randInt(0, openIndexes.size() - 1));
-                if (index < 0 || index >= spaces.length)
-                    throw new IndexOutOfBoundsException();
-            }
-            else {
+            int aiMove = firstPossibleOWin(), aiBlock = spotToBlockX(), aiRand = openIndexes.get(randInt(0, openIndexes.size() - 1));
+
+            int index = -1;
+
+            if (aiMove != -1)
                 index = aiMove;
-            }
+            else if (aiBlock != -1)
+                index = aiBlock;
+            else
+                index = aiRand;
 
             spaces[index] = HAS_O;
 
@@ -342,11 +635,10 @@ public class MainActivity extends Activity
                 displayDialog("Draw! Play again?");
         }
 
-        @Override
-        public boolean onTouchEvent(MotionEvent me)
+        public void touch(MotionEvent me)
         {
             if (!keepGoing || me.getAction() != MotionEvent.ACTION_DOWN)
-                return true;
+                return;// true;
 
             sound.start(); // play the sound effect
 
@@ -359,7 +651,7 @@ public class MainActivity extends Activity
                 spaces[index] = HAS_X;
                 invalidate();
                 if (checkWin(spaces, this)) {
-                    return true;
+                    return;// true;
                 }
                 invalidate();
                 playO();
@@ -368,7 +660,7 @@ public class MainActivity extends Activity
                 invalidate();
             }
 
-            return true;
+            //return true;
         }
 
         @Override
