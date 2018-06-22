@@ -10,6 +10,7 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Point;
 import android.graphics.Rect;
+import android.graphics.drawable.Drawable;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -26,7 +27,17 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;*/
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.io.Serializable;
+import java.io.StreamCorruptedException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Random;
 
 public class MainActivity extends Activity
@@ -39,6 +50,18 @@ public class MainActivity extends Activity
     private ShakeSensor mShakeDetector;
     private GameView game;
 
+    private static void displayInfo(Context context, String mssg)
+    {
+        AlertDialog.Builder builder = new AlertDialog.Builder(context);
+        builder.setMessage(mssg).setPositiveButton("Okay", new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialogInterface, int i) {
+                dialogInterface.dismiss();
+            }
+        });
+        builder.show();
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState)
     {
@@ -48,6 +71,8 @@ public class MainActivity extends Activity
 
         music = MediaPlayer.create(this, R.raw.music);
         music.start();
+
+        final MainActivity ma = this;
 
         // ShakeDetector initialization
         mSensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
@@ -60,6 +85,8 @@ public class MainActivity extends Activity
                  * method you would use to setup whatever you want done once the
                  * device has been shook.
                  */
+                displayInfo(ma, "onShake()");
+
                 if (game != null)
                     game.onShake();
             }
@@ -221,6 +248,35 @@ public class MainActivity extends Activity
         }
     }
 
+    private static class WLD implements Serializable
+    {
+        public int wins;
+        public int losses;
+        public int draws;
+
+        public static final long serializableVersionUID = 2L;
+
+        public WLD(int w, int l, int d)
+        {
+            wins = w;
+            losses = l;
+            draws = d;
+        }
+
+        public WLD()
+        {
+            wins = -1;
+            losses = -1;
+            draws = -1;
+        }
+
+        @Override
+        public String toString()
+        {
+            return "(" + wins + "/" + losses + "/" + draws + ")";
+        }
+    }
+
     private static class GameView extends View implements ShakeSensor.ShakeListener {
         private ArrayList<Pair<Point>> gridlines;
         private static final ArrayList<Pair<Integer>> winpairs;
@@ -234,6 +290,9 @@ public class MainActivity extends Activity
         private MediaPlayer sound;
 
         public GameView self;
+
+        private Drawable XDraw;
+        private Drawable ODraw;
 
         private static final int OPEN = 0, HAS_X = 1, HAS_O = 2;
 
@@ -254,9 +313,12 @@ public class MainActivity extends Activity
         public GameView(final Context context)
         {
             super(context);
-            setFocusable(true);
-
             parent = context;
+
+            XDraw = context.getResources().getDrawable(R.drawable.image_x);
+            ODraw = context.getResources().getDrawable(R.drawable.image_o);
+
+            setFocusable(true);
 
             gridlines = new ArrayList<Pair<Point>>();
 
@@ -299,9 +361,34 @@ public class MainActivity extends Activity
                     @Override
                     public boolean onFling(MotionEvent m1, MotionEvent m2, float vx, float vy)
                     {
-                        // rotate the board?
+                        //displayInfo("boolean onFling(MotionEvent, MotionEvent, float, float");
 
-                        return false;
+                        final AlertDialog.Builder dialog = new AlertDialog.Builder(parent);
+                        dialog.setMessage("Erase Current Scores?").setPositiveButton("Yes", new DialogInterface.OnClickListener() {
+                            @Override
+                            public void onClick(DialogInterface dialogInterface, int i) {
+                                try {
+                                    File file = getScoresFile();
+                                    FileOutputStream fos = new FileOutputStream(file);
+                                    ObjectOutputStream oos = new ObjectOutputStream(fos);
+
+                                    oos.writeObject(new WLD(0, 0, 0));
+                                }
+                                catch(Exception ex) {
+                                    Log.e("onFling dialog", "Error erasing scores: " + ex.getMessage());
+                                    System.exit(0);
+                                }
+                            }
+                        }).setNegativeButton("Nah", new DialogInterface.OnClickListener() {
+                            @Override
+                            public void onClick(DialogInterface dialogInterface, int i) {
+                                dialogInterface.dismiss(); // not sure which does what
+                                dialogInterface.cancel();
+                            }
+                        });
+                        dialog.show();
+
+                        return true;
                     }
                 });
 
@@ -339,7 +426,7 @@ public class MainActivity extends Activity
             }
         }
 
-        @Override
+        /*@Override
         public void onShake()
         {
             String bundle = "com.example.eppsna01.tictactoe2";
@@ -349,9 +436,36 @@ public class MainActivity extends Activity
             prefs.edit().putLong(bundle + ".wins", 0).commit();
             prefs.edit().putLong(bundle + ".losses", 0).commit();
             prefs.edit().putLong(bundle + ".draws", 0).commit();
+        }*/
+
+        @Override
+        public void onShake()
+        {
+            AlertDialog.Builder dialog = new AlertDialog.Builder(parent);
+            dialog.setMessage("Erase scores?").setPositiveButton("Yes", new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface dialogInterface, int i) {
+                    try {
+                        File file = getScoresFile();
+                        FileOutputStream fos = new FileOutputStream(file, false);
+                        ObjectOutputStream oos = new ObjectOutputStream(fos);
+
+                        oos.writeObject(new WLD(0, 0, 0));
+                    }
+                    catch(Exception ex) {
+                        Log.e("onShake()", "Error creating file object");
+                        System.exit(0);
+                    }
+                }
+            }).setNegativeButton("No", new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface dialogInterface, int i) {
+                    dialogInterface.dismiss();
+                }
+            });
         }
 
-        private void changePropertyPrefs(String name, long inc) {
+        /*private void changePropertyPrefs(String name, long inc) {
             String bundle = "com.example.eppsna01.tictactoe2";
             SharedPreferences prefs = parent.getSharedPreferences(bundle, Context.MODE_PRIVATE);
 
@@ -361,9 +475,36 @@ public class MainActivity extends Activity
             if (!prefs.edit().putLong(bundle + "." + name, data).commit()) {
                 Log.e("changeProperty()", "Error changing property");
             }
+        }*/
+
+        private void writeZeros(File f) throws IOException
+        {
+            String fname = "writeZeros(File)";
+
+            try {
+                if (f.createNewFile()) {
+                    Log.e(fname, "Writing zeros...");
+                    FileOutputStream fos = new FileOutputStream(f);
+                    ObjectOutputStream oos = new ObjectOutputStream(fos);
+                    oos.writeObject(new WLD(0, 0, 0));
+                }
+            }
+            catch (IOException ioe) {
+                Log.e(fname, "IOException: " + ioe.getMessage());
+                Log.e(fname, "Stack Trace: ");
+                StackTraceElement[] stackTrace = ioe.getStackTrace();
+
+                for (int x = 0; x < stackTrace.length; x++)
+                    Log.e(fname, stackTrace[x].toString());
+
+                System.exit(0);
+            }
         }
 
-        /*private File getScoresFile() throws IOException {
+        private File getScoresFile() throws IOException
+        {
+            Log.d("getScoresFile()", "Getting the scores file object...");
+
             String[] files = parent.fileList();
             boolean found = false;
             File scores = null;
@@ -371,16 +512,22 @@ public class MainActivity extends Activity
             for (String f : files) {
                 if (f.equals("scores")) {
                     found = true;
-                    return new File(parent.getFilesDir(), "scores");
+                    scores = new File(parent.getFilesDir(), "scores");
+                    break;
                 }
             }
 
+            writeZeros(scores);
+
             if (!found) {
                 scores = new File(parent.getFilesDir(), "scores");
-                FileOutputStream fos = new FileOutputStream(scores, false);
+                if(scores.createNewFile())
+                    Log.e("getScoresFile", "File successfully created");
+                else
+                    Log.e("getScoresFile", "not found, but file already exists?");
 
-                String data = "0 0 0";
-                fos.write(data.getBytes());
+                // do this if file doesn't exist???
+                writeZeros(scores);
 
                 return scores;
             }
@@ -388,8 +535,77 @@ public class MainActivity extends Activity
             return scores;
         }
 
-        private void changePropertyFile(String name, long inc) {
+        private void changePropertyFile(String name, long inc)
+        {
+            String fname = "changePropertyFile";
+            Log.d(fname, "calling changePropertyFile(String, long)...");
+
             File file = null;
+            FileInputStream fis = null;
+            ObjectInputStream ois = null;
+            WLD wld = null;
+
+            try {
+                file = getScoresFile();
+                if (file == null)
+                    Log.e(fname, "file == null");
+                if (file.createNewFile())
+                    Log.e(fname, "created file?? (not good)");
+                else
+                    Log.d(fname, "File didn't need to be created (good)");
+
+                fis = new FileInputStream(file);
+                if (fis == null)
+                    Log.e(fname, "fis == null");
+
+                ois = new ObjectInputStream(fis);
+                if (ois == null)
+                    Log.e(fname, "ois == null");
+
+                wld = (WLD) ois.readObject();
+                if (wld == null)
+                    Log.e(fname, "wld == null");
+            }
+            catch (StreamCorruptedException sce) {
+                Log.e(fname, "Stream is corrupted");
+                System.exit(0);
+            }
+            catch (IOException ioe) {
+                Log.e(fname, "I/O error occurred");
+                System.exit(0);
+            }
+            catch (SecurityException se) {
+                Log.e(fname, "Security exception??");
+                System.exit(0);
+            }
+            catch(Exception ex) {
+                Log.e(fname, "Other exception: " + ex.getMessage());
+                System.exit(0);
+            }
+
+            if (name == "wins")
+                wld.wins += inc;
+            else if (name == "losses")
+                wld.losses += inc;
+            else if (name == "draws")
+                wld.draws += inc;
+            else {
+                Log.e(fname, "Invalid \"name\": " + name);
+                System.exit(0);
+            }
+
+            try {
+                FileOutputStream fos = new FileOutputStream(file);
+                ObjectOutputStream oos = new ObjectOutputStream(fos);
+
+                oos.writeObject(wld);
+            }
+            catch(Exception ex) {
+                Log.e(fname, "Error during output");
+                System.exit(0);
+            }
+
+            /*File file = null;
 
             try {
                 file = getScoresFile();
@@ -446,30 +662,33 @@ public class MainActivity extends Activity
             } else {
                 Log.e("changePropertyFile", "Invalid \"name\" parameter");
                 System.exit(0);
-            }
-        }*/
+            }*/
+        }
 
         private void changeProperty(String name, long inc)
         {
-            changePropertyPrefs(name, inc);
+            changePropertyFile(name, inc);
         }
 
-        private String getWLDStringPrefs()
+        /*private String getWLDStringPrefs()
         {
             String appname = "com.example.eppsna01.tictactoe2";
 
             SharedPreferences prefs = parent.getSharedPreferences(appname, Context.MODE_PRIVATE);
 
             return prefs.getLong(appname + ".wins", -1) + "/" + prefs.getLong(appname + ".losses", -1) + "/" + prefs.getLong(appname + ".draws", -1);
-        }
+        }*/
 
-        /*private String getWLDStringFile()
+        private String getWLDStringFile()
         {
             FileInputStream fis = null;
+            ObjectInputStream ois = null;
             try {
                 fis = new FileInputStream(getScoresFile());
+                ois = new ObjectInputStream(fis);
 
-                return fis.read() + "/" + fis.read() + "/" + fis.read();
+                WLD wld = (WLD) ois.readObject();
+                return wld.toString();
             }
             catch (Exception ex) {
                 Log.e("getWLDStringFile", "Could not open/read from file");
@@ -478,11 +697,11 @@ public class MainActivity extends Activity
             }
 
             return "(error)";
-        }*/
+        }
 
         private String getWLDString()
         {
-            return getWLDStringPrefs();
+            return getWLDStringFile();
         }
 
         @Override
@@ -686,7 +905,27 @@ public class MainActivity extends Activity
 
             for (int i : spaces)
             {
-                if (i == HAS_X)
+                if (i != OPEN)
+                {
+                    Rect r = new Rect();
+                    r.left = xpos;
+                    r.right = xpos + sqWidth;
+                    r.top = ypos;
+                    r.bottom = ypos + sqHeight;
+
+                    Drawable draw = null;
+
+                    if (i == HAS_X) {
+                        draw = XDraw;
+                    } else if (i == HAS_O) {
+                        draw = ODraw;
+                    }
+
+                    draw.setBounds(r);
+                    draw.draw(canvas);
+                }
+
+                /*if (i == HAS_X)
                 {
                     paint.setColor(Color.BLUE);
                     canvas.drawLine(xpos, ypos, xpos + sqWidth, ypos + sqHeight, paint);
@@ -697,7 +936,7 @@ public class MainActivity extends Activity
                 {
                     paint.setColor(Color.RED);
                     canvas.drawCircle(xpos + sqWidth / 2, ypos + sqHeight / 2, Math.min(sqWidth, sqHeight) / 2, paint);
-                }
+                }*/
 
                 xpos += sqWidth;
                 if (xpos >= 3 * getWidth() / 4) {
